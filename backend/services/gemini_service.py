@@ -55,8 +55,8 @@ def get_query_embedding(query: str) -> list[float]:
     return response.embeddings[0].values
 
 
-def generate_grounded_answer(query: str, context_chunks: list[dict]) -> str:
-    """Generates strictly grounded answers with citations using Gemini 1.5 Flash."""
+def _build_grounded_prompt(query: str, context_chunks: list[dict]) -> tuple[str, str]:
+    """Builds the grounded prompt used for generation."""
     formatted_context = ""
     for idx, chunk in enumerate(context_chunks):
         formatted_context += (
@@ -74,6 +74,12 @@ def generate_grounded_answer(query: str, context_chunks: list[dict]) -> str:
     )
 
     prompt = f"Context:\n{formatted_context}\n\nUser Question: {query}"
+    return prompt, system_instruction
+
+
+def generate_grounded_answer(query: str, context_chunks: list[dict]) -> str:
+    """Generates strictly grounded answers with citations using Gemini 1.5 Flash."""
+    prompt, system_instruction = _build_grounded_prompt(query, context_chunks)
 
     response = client.models.generate_content(
         model=CHAT_MODEL,
@@ -88,3 +94,19 @@ def generate_grounded_answer(query: str, context_chunks: list[dict]) -> str:
         return "I could not generate an answer based on the provided documents."
 
     return response.text
+
+
+def generate_grounded_answer_stream(query: str, context_chunks: list[dict]):
+    """Streams a grounded answer in chunks so the UI can render it incrementally."""
+    prompt, system_instruction = _build_grounded_prompt(query, context_chunks)
+
+    for chunk in client.models.generate_content_stream(
+        model=CHAT_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            temperature=0.2,
+        ),
+    ):
+        if chunk.text:
+            yield chunk.text

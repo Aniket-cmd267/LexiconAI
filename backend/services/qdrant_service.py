@@ -1,53 +1,61 @@
 import uuid
-from typing import Any, Callable, cast
+import re
+from typing import Any
 
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from config import QDRANT_URL, QDRANT_API_KEY
 
 qdrant_client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
-COLLECTION_NAME = "notebook_chunks"
+
+def format_collection_name(notebook_id: str) -> str:
+    """
+    Sanitizes notebook_id to be a valid Qdrant collection name
+    (only alphanumeric characters, underscores, and hyphens).
+    """
+    clean_id = re.sub(r'[^a-zA-Z0-9_-]', '_', notebook_id.strip())
+    return f"notebook_{clean_id}"
 
 
-def init_qdrant():
-    """Ensure the Qdrant collection exists and has filter indexes for metadata."""
-    collections = qdrant_client.get_collections().collections
-    exists = any(c.name == COLLECTION_NAME for c in collections)
+def init_qdrant(notebook_id: str):
+    """
+    Ensures a dedicated Qdrant collection exists for this specific notebook.
+    """
+    collection_name = format_collection_name(notebook_id)
+    collections = [c.name for c in qdrant_client.get_collections().collections]
 
-    if not exists:
+    if collection_name not in collections:
         qdrant_client.create_collection(
-            collection_name=COLLECTION_NAME,
+            collection_name=collection_name,
             vectors_config=models.VectorParams(
-                size=768,
+                size=768,  # Matches Google text-embedding-004 dimensions
                 distance=models.Distance.COSINE,
             ),
         )
+        print(f" Created new dedicated Qdrant collection: {collection_name}")
 
-    for field_name in ["notebook_id", "document_id"]:
-        try:
-            qdrant_client.create_payload_index(
-                collection_name=COLLECTION_NAME,
-                field_name=field_name,
-                field_schema=models.PayloadSchemaType.KEYWORD,
-            )
-        except Exception as exc:
-            message = str(exc).lower()
-            if "already exists" not in message and "index already" not in message:
-                raise
+    qdrant_client.create_payload_index(
+        collection_name=collection_name,
+        field_name="document_id",
+        field_schema=models.PayloadSchemaType.KEYWORD,
+    )
+
+    return collection_name
 
 
-def insert_chunks(chunks_data: list[dict]):
-    """Insert text chunks and embeddings with metadata payloads."""
+def insert_chunks(notebook_id: str, chunks_data: list[dict]):
+    """Insert text chunks and embeddings into the notebook's dedicated collection."""
     if not chunks_data:
         return
 
-    print("Inserting Chunks....")
+    # Ensure this notebook's collection exists before inserting
+    collection_name = init_qdrant(notebook_id)
+
     points = models.Batch(
         ids=[str(uuid.uuid4()) for _ in chunks_data],
         vectors=[item["vector"] for item in chunks_data],
         payloads=[
             {
-                "notebook_id": item["notebook_id"],
                 "document_id": item["document_id"],
                 "filename": item["filename"],
                 "page_number": item["page_number"],
@@ -57,7 +65,7 @@ def insert_chunks(chunks_data: list[dict]):
         ],
     )
 
-    qdrant_client.upsert(collection_name=COLLECTION_NAME, points=points)
+    qdrant_client.upsert(collection_name=collection_name, points=points)
 
 
 def search_relevant_chunks(
@@ -66,22 +74,41 @@ def search_relevant_chunks(
     doc_ids: list[str] | None = None,
     limit: int = 6,
 ) -> list[dict]:
-    """Filtered semantic search scoped by notebook_id and optional doc_ids."""
-    must_filters: list[models.FieldCondition] = [
-        models.FieldCondition(key="notebook_id", match=models.MatchValue(value=notebook_id))
-    ]
+    """Search vectors strictly inside the notebook's dedicated collection."""
+    collection_name = init_qdrant(notebook_id)
+
+    must_filters: list[models.Condition] = []
 
     if doc_ids and len(doc_ids) > 0:
         must_filters.append(
             models.FieldCondition(key="document_id", match=models.MatchAny(any=doc_ids))
         )
 
-    search_method: Callable[..., Any] = getattr(qdrant_client, "search")
-    search_result = search_method(
-        collection_name=COLLECTION_NAME,
-        query_vector=query_vector,
-        query_filter=models.Filter(must=cast(list[models.Condition], must_filters)),
-        limit=limit,
-    )
+    query_filter = models.Filter(must=must_filters) if must_filters else None
+
+    search_fn = getattr(qdrant_client, "query_points", None) or getattr(qdrant_client, "search")
+
+    if search_fn.__name__ == "query_points":
+        search_result = search_fn(
+            collection_name=collection_name,
+            query=query_vector,
+            filter=query_filter,
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+    else:
+        search_result = search_fn(
+            collection_name=collection_name,
+            query_vector=query_vector,
+            query_filter=query_filter,
+            limit=limit,
+        )
 
     return [hit.payload for hit in search_result if hit.payload is not None]
+
+def delete_notebook_collection(notebook_id: str):
+    """Deletes the entire collection if a notebook is deleted."""
+    collection_name = format_collection_name(notebook_id)
+    qdrant_client.delete_collection(collection_name=collection_name)
+    print(f"🗑️ Deleted Qdrant collection: {collection_name}")

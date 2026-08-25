@@ -53,14 +53,41 @@ export default function Home() {
     setMessages((prev) => [...prev, userMsg]);
     setLoading(true);
 
+    const assistantPlaceholder: ChatMessage = {
+      sender: 'assistant',
+      message: '',
+      citations: [],
+    };
+
+    setMessages((prev) => [...prev, assistantPlaceholder]);
+
     try {
-      const data = await sendChatMessage(notebookId, query, selectedDocIds);
-      const assistantMsg: ChatMessage = {
-        sender: 'assistant',
-        message: data.answer,
-        citations: data.citations,
-      };
-      setMessages((prev) => [...prev, assistantMsg]);
+      const data = await sendChatMessage(notebookId, query, selectedDocIds, (chunk) => {
+        setMessages((prev) => {
+          const next = [...prev];
+          const lastIndex = next.length - 1;
+          if (lastIndex >= 0 && next[lastIndex].sender === 'assistant') {
+            next[lastIndex] = {
+              ...next[lastIndex],
+              message: (next[lastIndex].message || '') + chunk,
+            };
+          }
+          return next;
+        });
+      });
+
+      setMessages((prev) => {
+        const next = [...prev];
+        const lastIndex = next.length - 1;
+        if (lastIndex >= 0 && next[lastIndex].sender === 'assistant') {
+          next[lastIndex] = {
+            ...next[lastIndex],
+            message: data.answer || next[lastIndex].message || '',
+            citations: data.citations || [],
+          };
+        }
+        return next;
+      });
     } catch (err) {
       console.error('Chat error:', err);
       setMessages((prev) => [

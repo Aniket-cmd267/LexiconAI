@@ -38,9 +38,10 @@ export async function uploadDocument(notebookId: string, file: File) {
 export async function sendChatMessage(
   notebookId: string,
   query: string,
-  selectedDocIds: string[]
+  selectedDocIds: string[],
+  onChunk?: (text: string) => void
 ): Promise<{ answer: string; citations: { filename: string; page_number: number }[] }> {
-  const res = await fetch(`${API_BASE}/api/chat`, {
+  const res = await fetch(`${API_BASE}/api/chat/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -51,7 +52,52 @@ export async function sendChatMessage(
   });
 
   if (!res.ok) throw new Error('Failed to send message');
-  return res.json();
+
+  const reader = res.body?.getReader();
+  if (!reader) throw new Error('ReadableStream not supported');
+
+  const decoder = new TextDecoder();
+  let fullText = '';
+  let citations: { filename: string; page_number: number }[] = [];
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+
+    const text = decoder.decode(value, { stream: true });
+    const lines = text.split('\n');
+
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      if (!trimmedLine) continue;
+
+      if (trimmedLine.startsWith('data:')) {
+        const payload = trimmedLine.slice(5).trim();
+        if (!payload) continue;
+
+        try {
+          const parsed = JSON.parse(payload);
+          if (parsed.type === 'text') {
+            const chunkText = parsed.text || '';
+            fullText += chunkText;
+            onChunk?.(chunkText);
+          }
+
+          if (parsed.citations) {
+            citations = parsed.citations;
+          }
+        } catch {
+          fullText += payload;
+        }
+      }
+
+      if (trimmedLine === 'event: done') {
+        continue;
+      }
+    }
+  }
+
+  return { answer: fullText, citations };
 }
 
 // 5. Fetch chat history
