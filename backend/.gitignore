@@ -1,0 +1,40 @@
+# Python virtual environment and dependency caches
+venv/
+.venv/
+ENV/
+env/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Build and packaging artifacts
+build/
+dist/
+site/
+
+# Local secrets and environment files
+.env
+.env.*
+!.env.example
+
+# Database / local data files
+*.sqlite3
+*.db
+*.log
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
