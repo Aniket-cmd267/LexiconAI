@@ -1,37 +1,101 @@
+import time
+import re
+from google.genai.errors import ClientError
 from google import genai
 from google.genai import types
 from config import GEMINI_API_KEY
-
 # Initialize the new unified client
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 EMBEDDING_MODEL = "gemini-embedding-001"
 CHAT_MODEL = "gemini-2.5-flash"
 
+embedding_cache: dict[str, list[float]] = {}
+
+EMBEDDING_REQUEST_INTERVAL_SECONDS = 0.6
+last_embedding_request_at = 0.0
+
+MAX_EMBEDDING_RETRIES = 3
+query_embedding_cache: dict[str, list[float]] = {}
+
+
+def _retry_delay(error: ClientError, attempt: int) -> float:
+    message = str(error)
+
+    match = re.search(r"retry in ([\d.]+)s", message, re.IGNORECASE)
+    if match:
+        return float(match.group(1)) + 1
+
+    return min(2 ** attempt, 60)
+
+
+def _embed_with_retry(contents, config):
+    global last_embedding_request_at
+
+    for attempt in range(MAX_EMBEDDING_RETRIES + 1):
+        elapsed = time.monotonic() - last_embedding_request_at
+        if elapsed < EMBEDDING_REQUEST_INTERVAL_SECONDS:
+            time.sleep(EMBEDDING_REQUEST_INTERVAL_SECONDS - elapsed)
+
+        try:
+            response = client.models.embed_content(
+                model=EMBEDDING_MODEL,
+                contents=contents,
+                config=config,
+            )
+            last_embedding_request_at = time.monotonic()
+            return response
+
+        except ClientError as error:
+            if error.code != 429 or attempt == MAX_EMBEDDING_RETRIES:
+                raise
+
+            delay = _retry_delay(error, attempt)
+            print(f"Embedding quota reached. Retrying in {delay:.1f} seconds...")
+            time.sleep(delay)
+
+    raise RuntimeError("Embedding request failed after retries.")
 
 def get_batch_embeddings(texts: list[str]) -> list[list[float]]:
-    """Generates 768-dim embeddings for multiple chunks in ONE batch call."""
-    if not texts:
-        return []
+    """Generates embeddings while reusing vectors for repeated chunk text."""
 
     # Clean out empty strings
     clean_texts = [t.strip() for t in texts if t.strip()]
     if not clean_texts:
         return []
 
-    response = client.models.embed_content(
-        model=EMBEDDING_MODEL,
-        contents=clean_texts,
-        config=types.EmbedContentConfig(
-            task_type="RETRIEVAL_DOCUMENT",
-            output_dimensionality=768,
-        ),
-    )
+    uncached_texts = list(dict.fromkeys(
+        text for text in clean_texts if text not in embedding_cache
+    ))
 
-    if not response.embeddings:
-        raise ValueError("No embeddings returned by Google GenAI API.")
+    global last_embedding_request_at
 
-    return [e.values for e in response.embeddings if e.values is not None]
+    for start in range(0, len(uncached_texts), 100):
+        batch = uncached_texts[start:start + 100]
+
+        # Keep embedding requests sequential and below the free-tier rate limit.
+        elapsed = time.monotonic() - last_embedding_request_at
+        if elapsed < EMBEDDING_REQUEST_INTERVAL_SECONDS:
+            time.sleep(EMBEDDING_REQUEST_INTERVAL_SECONDS - elapsed)
+
+        response = _embed_with_retry(
+            contents=batch,
+            config=types.EmbedContentConfig(
+                task_type="RETRIEVAL_DOCUMENT",
+                output_dimensionality=768,
+            ),
+        )
+        last_embedding_request_at = time.monotonic()
+        response_embeddings = response.embeddings or []
+        if len(response_embeddings) != len(batch):
+            raise ValueError("Gemini returned an incomplete embedding response.")
+
+        for text, embedding in zip(batch, response_embeddings):
+            if embedding.values is None:
+                raise ValueError("Gemini returned an embedding without values.")
+            embedding_cache[text] = embedding.values
+
+    return [embedding_cache[text] for text in clean_texts]
 
 
 def get_query_embedding(query: str) -> list[float]:
@@ -40,8 +104,7 @@ def get_query_embedding(query: str) -> list[float]:
     if not clean_query:
         raise ValueError("Search query cannot be empty.")
 
-    response = client.models.embed_content(
-        model=EMBEDDING_MODEL,
+    response = _embed_with_retry(
         contents=clean_query,
         config=types.EmbedContentConfig(
             task_type="RETRIEVAL_QUERY",
@@ -66,11 +129,13 @@ def _build_grounded_prompt(query: str, context_chunks: list[dict]) -> tuple[str,
 
     system_instruction = (
         "You are an expert research assistant like Google NotebookLM. "
-        "Answer the user's question ONLY using the provided source context below.\n"
-        "Strict Guidelines:\n"
-        "1. If the answer cannot be found in the context, state: 'I cannot find the answer in the provided documents.'\n"
-        "2. Do not use outside knowledge.\n"
-        "3. Every factual claim must be backed with an inline citation in format: [Doc: <filename>, Page: <page_number>]."
+        "Answer the user's question ONLY using the provided source context below.\n\n"
+        "Formatting Guidelines:\n"
+        "- Write in clean, publication-ready prose with proper typography and sentence casing.\n"
+        "- Avoid shouting in ALL-CAPS unless it is an acronym.\n"
+        "- Use clean bullet points and clear paragraphs.\n"
+        "- If the answer cannot be found in the context, state: 'I cannot find the answer in the provided documents.'\n"
+        "- Every factual claim MUST be followed by an inline citation formatted as: [Page: <page_number>]."
     )
 
     prompt = f"Context:\n{formatted_context}\n\nUser Question: {query}"

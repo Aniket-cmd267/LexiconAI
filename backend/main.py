@@ -1,17 +1,20 @@
 import uuid
 import json
+from typing import cast
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
+from sqlalchemy import inspect, text
 
 # Database & Models
 from database import engine, Base, get_db
 import models
 
 # Services
+from services.auth_service import hash_password, verify_password, create_access_token, get_current_user
 from services.pdf_Service import parse_and_chunk_pdf
 from services.gemini_service import (
     get_batch_embeddings,
@@ -21,7 +24,7 @@ from services.gemini_service import (
 )
 from services.qdrant_service import insert_chunks, search_relevant_chunks, init_qdrant
 
-app = FastAPI(title="NotebookLM Backend API")
+app = FastAPI(title="Lexicon Backend API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -59,15 +62,30 @@ app.openapi = custom_openapi
 @app.on_event("startup")
 def startup_event():
     Base.metadata.create_all(bind=engine)
+    inspector = inspect(engine)
+    if "user_id" not in {column["name"] for column in inspector.get_columns("notebooks")}:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "ALTER TABLE notebooks "
+                    "ADD COLUMN user_id VARCHAR(36) "
+                    "REFERENCES users(id) ON DELETE CASCADE"
+                )
+            )
     print("✅ Database tables initialized successfully.")
 
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
 
 class ChatRequest(BaseModel):
     notebook_id: str
     query: str
     selected_doc_ids: list[str] = []
-
-
 class CreateNotebookRequest(BaseModel):
     name: str
 
@@ -75,11 +93,41 @@ class CreateNotebookRequest(BaseModel):
 # ==========================================
 # 1. NOTEBOOK / WORKSPACE ROUTES
 # ==========================================
+@app.post("/api/auth/register")
+def register(payload: RegisterRequest, db: Session = Depends(get_db)):
+    existing_user = db.query(models.User).filter(models.User.email == payload.email).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    user = models.User(
+        email=payload.email,
+        hashed_password=hash_password(payload.password)
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    token = create_access_token(cast(str, user.id), cast(str, user.email))
+    return {"token": token, "user": {"id": user.id, "email": user.email}}
+
+@app.post("/api/auth/login")
+def login(payload: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.email == payload.email).first()
+    if not user or not verify_password(payload.password, cast(str, user.hashed_password)):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    token = create_access_token(cast(str, user.id), cast(str, user.email))
+    return {"token": token, "user": {"id": user.id, "email": user.email}}
+
+
 
 @app.post("/api/notebooks")
-def create_notebook(payload: CreateNotebookRequest, db: Session = Depends(get_db)):
+def create_notebook(payload: CreateNotebookRequest,current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Create a new notebook workspace and its Qdrant collection."""
-    notebook = models.Notebook(name=payload.name)
+    notebook = models.Notebook(
+        name=payload.name,
+        user_id=cast(str, current_user.id),
+    )
     db.add(notebook)
     db.commit()
     db.refresh(notebook)
@@ -91,9 +139,12 @@ def create_notebook(payload: CreateNotebookRequest, db: Session = Depends(get_db
 
 
 @app.get("/api/notebooks")
-def list_notebooks(db: Session = Depends(get_db)):
-    return db.query(models.Notebook).order_by(models.Notebook.created_at.desc()).all()
-
+def list_notebooks(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return( 
+            db.query(models.Notebook)
+            .filter(models.Notebook.user_id == current_user.id)
+            .order_by(models.Notebook.created_at.desc()).all()
+    )
 
 # ==========================================
 # 2. DOCUMENT MANAGEMENT ROUTES

@@ -9,7 +9,7 @@ def _normalize_page_text(raw_text):
     return str(raw_text)
 
 
-def parse_and_chunk_pdf(file_bytes: bytes, chunk_size: int = 700, overlap: int = 100):
+def parse_and_chunk_pdf(file_bytes: bytes, chunk_size: int = 1400, overlap: int = 200):
     """
     Parses PDF bytes in RAM and extracts clean text chunks with page numbers.
     """
