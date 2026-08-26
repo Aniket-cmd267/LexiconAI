@@ -1,17 +1,65 @@
 import { DocumentItem, ChatMessage, Notebook } from '../types';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
 
-// 1. Fetch all notebooks
-export async function getNotebooks(): Promise<Notebook[]> {
-  const res = await fetch(`${API_BASE}/api/notebooks`);
-  if (!res.ok) throw new Error('Failed to fetch notebooks');
+function getAuthHeaders(): Record<string, string> {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+// 1. Auth APIs
+export async function registerUser(email: string, password: string) {
+  const res = await fetch(`${API_BASE}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.detail || 'Registration failed');
+  }
   return res.json();
 }
 
+export async function loginUser(email: string, password: string) {
+  const res = await fetch(`${API_BASE}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.detail || 'Login failed');
+  }
+  return res.json();
+}
+
+// 1. Fetch all notebooks
+export async function getNotebooks(): Promise<Notebook[]> {
+  const res = await fetch(`${API_BASE}/api/notebooks`, {
+    headers: getAuthHeaders(),
+  });
+  if (res.status === 401) throw new Error('Your session has expired. Please sign in again.');
+  if (!res.ok) throw new Error(`Failed to fetch notebooks (${res.status})`);
+  return res.json();
+}
+export async function createNotebook(name: string): Promise<Notebook> {
+  const res = await fetch(`${API_BASE}/api/notebooks`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error('Failed to create notebook');
+  return res.json();
+}
 // 2. Fetch documents for a notebook
 export async function getDocuments(notebookId: string): Promise<DocumentItem[]> {
-  const res = await fetch(`${API_BASE}/api/documents?notebook_id=${encodeURIComponent(notebookId)}`);
+  const res = await fetch(`${API_BASE}/api/documents?notebook_id=${encodeURIComponent(notebookId)}`, {
+    headers: getAuthHeaders(),
+  });
   if (!res.ok) throw new Error('Failed to fetch documents');
   return res.json();
 }
@@ -24,6 +72,7 @@ export async function uploadDocument(notebookId: string, file: File) {
 
   const res = await fetch(`${API_BASE}/api/documents/upload`, {
     method: 'POST',
+    headers: getAuthHeaders(),
     body: formData,
   });
 
@@ -43,7 +92,10 @@ export async function sendChatMessage(
 ): Promise<{ answer: string; citations: { filename: string; page_number: number }[] }> {
   const res = await fetch(`${API_BASE}/api/chat/stream`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
     body: JSON.stringify({
       notebook_id: notebookId,
       query,
@@ -102,7 +154,9 @@ export async function sendChatMessage(
 
 // 5. Fetch chat history
 export async function getChatHistory(notebookId: string): Promise<ChatMessage[]> {
-  const res = await fetch(`${API_BASE}/api/chat/history?notebook_id=${encodeURIComponent(notebookId)}`);
+  const res = await fetch(`${API_BASE}/api/chat/history?notebook_id=${encodeURIComponent(notebookId)}`, {
+    headers: getAuthHeaders(),
+  });
   if (!res.ok) throw new Error('Failed to fetch chat history');
   return res.json();
 }
