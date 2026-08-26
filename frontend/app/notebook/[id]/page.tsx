@@ -17,6 +17,23 @@ export default function WorkspacePage() {
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
+  const [darkMode, setDarkMode] = useState(() =>
+    typeof window !== 'undefined' && localStorage.getItem('theme') === 'dark'
+  );
+
+  const handleThemeToggle = () => {
+    setDarkMode((current) => {
+      const next = !current;
+      localStorage.setItem('theme', next ? 'dark' : 'light');
+      return next;
+    });
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    router.push('/auth');
+  };
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -52,6 +69,14 @@ export default function WorkspacePage() {
     );
   };
 
+  const handleSelectAllDocs = () => {
+    setSelectedDocIds(documents.map((document) => document.id));
+  };
+
+  const handleClearDocSelection = () => {
+    setSelectedDocIds([]);
+  };
+
   const handleSendMessage = async (query: string) => {
     const userMsg: ChatMessage = { sender: 'user', message: query };
     setMessages((prev) => [...prev, userMsg]);
@@ -73,13 +98,20 @@ export default function WorkspacePage() {
   };
 
   return (
-    <div className="h-screen w-screen flex flex-col overflow-hidden bg-white">
-      <Navbar notebookName={`Workspace: ${notebookId.slice(0, 8)}...`} />
+    <div className={darkMode ? 'dark h-screen w-screen flex flex-col overflow-hidden' : 'h-screen w-screen flex flex-col overflow-hidden'}>
+      <Navbar
+        notebookName={`Workspace: ${notebookId.slice(0, 8)}...`}
+        darkMode={darkMode}
+        onThemeToggle={handleThemeToggle}
+        onLogout={handleLogout}
+      />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar
           documents={documents}
           selectedDocIds={selectedDocIds}
           onToggleDoc={handleToggleDoc}
+          onSelectAll={handleSelectAllDocs}
+          onClearSelection={handleClearDocSelection}
           onUpload={handleUpload}
         />
         <ChatPanel

@@ -21,7 +21,7 @@ const formatInlineText = (text: string): React.ReactNode[] => {
     if (part.startsWith('**') && part.endsWith('**')) {
       const boldContent = part.slice(2, -2);
       return (
-        <strong key={index} className="font-semibold text-gray-900">
+        <strong key={index} className="font-semibold text-slate-900 dark:text-white">
           {boldContent}
         </strong>
       );
@@ -35,11 +35,11 @@ const formatInlineText = (text: string): React.ReactNode[] => {
       return (
         <span
           key={index}
-          className="inline-flex items-center gap-1 mx-1 px-2 py-0.5 bg-indigo-50 border border-indigo-200 text-indigo-700 text-[11px] font-medium rounded-full cursor-pointer hover:bg-indigo-100 transition align-baseline shadow-2xs"
+          className="inline-flex items-center gap-1 mx-1 px-2 py-0.5 bg-indigo-50 border border-indigo-200 text-indigo-700 text-[11px] font-medium rounded-md cursor-pointer hover:bg-indigo-100 transition align-baseline shadow-2xs dark:bg-indigo-950/70 dark:border-indigo-800 dark:text-indigo-200 dark:hover:bg-indigo-900"
         >
           <Bookmark size={10} className="text-indigo-500" />
           <span className="max-w-[130px] truncate">{filename}</span>
-          <span className="text-indigo-400 font-bold">p.{page}</span>
+          <span className="text-indigo-400 font-bold dark:text-indigo-300">p.{page}</span>
         </span>
       );
     }
@@ -58,7 +58,7 @@ const BookLikeContent: React.FC<{ content: string }> = ({ content }) => {
   const flushList = () => {
     if (currentListItems.length > 0) {
       elements.push(
-        <ul key={`ul-${elements.length}`} className="space-y-1.5 my-2 pl-4 list-disc text-gray-700">
+        <ul key={`ul-${elements.length}`} className="space-y-1.5 my-2 pl-4 list-disc text-slate-700 dark:text-slate-300">
           {currentListItems}
         </ul>
       );
@@ -78,7 +78,7 @@ const BookLikeContent: React.FC<{ content: string }> = ({ content }) => {
     if (trimmed.startsWith('* ') || trimmed.startsWith('- ')) {
       const itemText = trimmed.slice(2);
       currentListItems.push(
-        <li key={`li-${lineIdx}`} className="text-[14px] leading-relaxed pl-1 text-gray-700">
+        <li key={`li-${lineIdx}`} className="text-[14px] leading-relaxed pl-1 text-slate-700 dark:text-slate-300">
           {formatInlineText(itemText)}
         </li>
       );
@@ -91,26 +91,26 @@ const BookLikeContent: React.FC<{ content: string }> = ({ content }) => {
     // Headings (###, ##, #)
     if (trimmed.startsWith('### ')) {
       elements.push(
-        <h3 key={`h3-${lineIdx}`} className="text-sm font-bold text-gray-900 mt-3 mb-1">
+          <h3 key={`h3-${lineIdx}`} className="text-sm font-bold text-slate-900 dark:text-white mt-3 mb-1">
           {formatInlineText(trimmed.slice(4))}
         </h3>
       );
     } else if (trimmed.startsWith('## ')) {
       elements.push(
-        <h2 key={`h2-${lineIdx}`} className="text-base font-bold text-gray-900 mt-4 mb-1.5">
+          <h2 key={`h2-${lineIdx}`} className="text-base font-bold text-slate-900 dark:text-white mt-4 mb-1.5">
           {formatInlineText(trimmed.slice(3))}
         </h2>
       );
     } else if (trimmed.startsWith('# ')) {
       elements.push(
-        <h1 key={`h1-${lineIdx}`} className="text-lg font-bold text-gray-900 mt-4 mb-2">
+          <h1 key={`h1-${lineIdx}`} className="text-lg font-bold text-slate-900 dark:text-white mt-4 mb-2">
           {formatInlineText(trimmed.slice(2))}
         </h1>
       );
     } else {
       // Regular Paragraph
       elements.push(
-        <p key={`p-${lineIdx}`} className="text-[14px] leading-relaxed text-gray-700 mb-2.5">
+        <p key={`p-${lineIdx}`} className="text-[14px] leading-relaxed text-slate-700 dark:text-slate-300 mb-2.5">
           {formatInlineText(trimmed)}
         </p>
       );
@@ -129,7 +129,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
   return (
     <div className={`flex gap-4 ${isUser ? 'justify-end' : 'justify-start'}`}>
       {!isUser && (
-        <div className="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center shrink-0 mt-1 shadow-sm">
+        <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 mt-1 shadow-sm shadow-indigo-600/20">
           <Bot size={16} />
         </div>
       )}
@@ -137,8 +137,8 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
       <div
         className={`max-w-3xl rounded-2xl px-6 py-5 ${
           isUser
-            ? 'bg-indigo-600 text-white rounded-br-none shadow-sm'
-            : 'bg-white border border-gray-200/80 text-gray-800 rounded-bl-none shadow-xs'
+            ? 'bg-indigo-600 text-white rounded-br-md shadow-sm shadow-indigo-600/20'
+            : 'bg-white border border-slate-200/80 text-slate-800 rounded-bl-md shadow-sm shadow-slate-200/60 dark:bg-slate-950 dark:border-slate-800 dark:text-slate-200 dark:shadow-black/20'
         }`}
       >
         {isUser ? (
